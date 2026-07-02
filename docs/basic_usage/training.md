@@ -37,6 +37,11 @@ python scripts/prepare_data.py --dataset sharegpt
 bash ./examples/run_llama3.1_8b_eagle3_online.sh
 ```
 
+`--train-data-path` and `--eval-data-path` accept local JSON/JSONL files, Parquet
+files or shard directories, and datasets saved with `Dataset.save_to_disk()`.
+For large datasets, download remote Hugging Face datasets to local storage first
+and pass the local path to training.
+
 ## 💨 Offline Training
 
 The difference between online and offline training is that we need to generate the hidden states before training. We also use ShareGPT and Llama3-8B-Instruct as an example.

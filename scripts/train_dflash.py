@@ -23,10 +23,13 @@ from torch.utils.data import DataLoader
 from tqdm import tqdm
 from transformers import AutoConfig
 
-from datasets import load_dataset
 from specforge.args import SGLangBackendArgs, TrackerArgs
 from specforge.core.dflash import OnlineDFlashModel
-from specforge.data import build_eagle3_dataset, prepare_dp_dataloaders
+from specforge.data import (
+    build_eagle3_dataset,
+    load_conversation_dataset,
+    prepare_dp_dataloaders,
+)
 from specforge.distributed import destroy_distributed, get_dp_group, init_distributed
 from specforge.modeling.draft.dflash import DFlashDraftModel
 from specforge.modeling.target.dflash_target_model import (
@@ -275,7 +278,10 @@ def build_dataloader(args, tokenizer) -> Tuple[DataLoader, Optional[DataLoader]]
     )
     cache_key = hashlib.md5(cache_params_string.encode()).hexdigest()
 
-    train_dataset = load_dataset("json", data_files=args.train_data_path)["train"]
+    train_dataset = load_conversation_dataset(
+        args.train_data_path,
+        is_preformatted=args.is_preformatted,
+    )
     train_eagle3_dataset = build_eagle3_dataset(
         dataset=train_dataset,
         tokenizer=tokenizer,
@@ -306,7 +312,10 @@ def build_dataloader(args, tokenizer) -> Tuple[DataLoader, Optional[DataLoader]]
 
     eval_dataloader = None
     if args.eval_data_path:
-        eval_dataset = load_dataset("json", data_files=args.eval_data_path)["train"]
+        eval_dataset = load_conversation_dataset(
+            args.eval_data_path,
+            is_preformatted=args.is_preformatted,
+        )
         eval_eagle3_dataset = build_eagle3_dataset(
             dataset=eval_dataset,
             tokenizer=tokenizer,

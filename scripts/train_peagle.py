@@ -23,13 +23,13 @@ from torch.utils.data import DataLoader
 from tqdm import tqdm
 from transformers import AutoTokenizer
 
-from datasets import DatasetDict, load_dataset
 from specforge import AutoDraftModelConfig, get_eagle3_target_model
 from specforge.args import SGLangBackendArgs, TrackerArgs
 from specforge.core.peagle import OnlinePEagleModel
 from specforge.data import (
     build_eagle3_dataset,
     generate_vocab_mapping_file,
+    load_conversation_dataset,
     prepare_dp_dataloaders,
 )
 from specforge.distributed import (
@@ -304,24 +304,6 @@ def build_draft_model(args: Namespace) -> Tuple:
     return draft_model_config, draft_model, ckpt_info, resume_state
 
 
-def load_conversation_dataset(data_path: str):
-    """Load local JSON/JSONL data like DFlash, or an HF dataset id."""
-    if os.path.isfile(data_path) and os.path.splitext(data_path)[1].lower() in (
-        ".json",
-        ".jsonl",
-    ):
-        return load_dataset("json", data_files=data_path)["train"]
-
-    dataset = load_dataset(data_path, split="train")
-    if isinstance(dataset, DatasetDict):
-        if "train" not in dataset:
-            raise ValueError(
-                f"Expected a 'train' split, but found splits: {list(dataset.keys())}"
-            )
-        return dataset["train"]
-    return dataset
-
-
 def build_dataloaders(
     args: Namespace,
     draft_model_config,
@@ -341,7 +323,10 @@ def build_dataloaders(
         f"{draft_vocab_size}"
     )
     cache_key = hashlib.md5(cache_params_string.encode()).hexdigest()
-    train_dataset = load_conversation_dataset(args.train_data_path)
+    train_dataset = load_conversation_dataset(
+        args.train_data_path,
+        is_preformatted=args.is_preformatted,
+    )
     with rank_0_priority():
         train_eagle3_dataset = build_eagle3_dataset(
             dataset=train_dataset,
@@ -376,7 +361,10 @@ def build_dataloaders(
 
     eval_dataloader = None
     if args.eval_data_path is not None:
-        eval_dataset = load_conversation_dataset(args.eval_data_path)
+        eval_dataset = load_conversation_dataset(
+            args.eval_data_path,
+            is_preformatted=args.is_preformatted,
+        )
         eval_eagle3_dataset = build_eagle3_dataset(
             eval_dataset,
             tokenizer,

@@ -22,7 +22,6 @@ from torch.utils.data import DataLoader
 from tqdm import tqdm
 from transformers import AutoProcessor
 
-from datasets import Dataset
 from specforge import (
     AutoDraftModelConfig,
     AutoEagle3DraftModel,
@@ -34,6 +33,7 @@ from specforge.data import (
     build_eagle3_dataset,
     build_offline_eagle3_dataset,
     generate_vocab_mapping_file,
+    load_conversation_dataset,
     prepare_dp_dataloaders,
 )
 from specforge.distributed import (
@@ -58,7 +58,6 @@ from specforge.utils import (
     print_on_rank0,
     print_with_rank,
     rank_0_priority,
-    safe_conversations_generator,
 )
 
 
@@ -579,9 +578,10 @@ def build_dataloaders(
     )
     cache_key = hashlib.md5(dataset_cache_params_string.encode()).hexdigest()
     vocab_cache_key = hashlib.md5(vocab_cache_params_string.encode()).hexdigest()
-    train_dataset = Dataset.from_generator(
-        generator=safe_conversations_generator,
-        gen_kwargs={"file_path": args.train_data_path},
+    train_dataset = load_conversation_dataset(
+        args.train_data_path,
+        is_preformatted=args.is_preformatted,
+        is_vlm=args.is_vlm,
     )
     is_online = (
         args.train_data_path is not None and args.train_hidden_states_path is None
@@ -630,9 +630,10 @@ def build_dataloaders(
     )
     if args.eval_data_path is not None or args.eval_hidden_states_path is not None:
         if args.eval_data_path is not None:
-            eval_dataset = Dataset.from_generator(
-                generator=safe_conversations_generator,
-                gen_kwargs={"file_path": args.eval_data_path},
+            eval_dataset = load_conversation_dataset(
+                args.eval_data_path,
+                is_preformatted=args.is_preformatted,
+                is_vlm=args.is_vlm,
             )
             eval_eagle3_dataset = build_eagle3_dataset(
                 eval_dataset,

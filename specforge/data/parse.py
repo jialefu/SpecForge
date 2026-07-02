@@ -49,6 +49,9 @@ class Parser(ABC):
         # ===== handle tool_calls =====
         if "tool_calls" in cleaned:
             tool_calls = cleaned["tool_calls"]
+            if tool_calls is None:
+                cleaned.pop("tool_calls", None)
+                return cleaned
 
             # tool_calls is a string → Parsing
             if isinstance(tool_calls, str):

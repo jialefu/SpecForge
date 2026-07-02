@@ -47,9 +47,12 @@ import torch.distributed as dist
 from tqdm import tqdm
 from transformers import AutoConfig, AutoProcessor
 
-from datasets import Dataset
 from specforge.args import SGLangBackendArgs
-from specforge.data import build_eagle3_dataset, prepare_dp_dataloaders
+from specforge.data import (
+    build_eagle3_dataset,
+    load_conversation_dataset,
+    prepare_dp_dataloaders,
+)
 from specforge.distributed import (
     destroy_distributed,
     get_dp_group,
@@ -63,7 +66,6 @@ from specforge.utils import (
     print_args_with_dots,
     print_with_rank,
     rank_0_priority,
-    safe_conversations_generator,
 )
 
 
@@ -617,15 +619,10 @@ def main():
 
     with rank_0_priority():
         print_with_rank("Loading/building dataset cache...")
-        dataset = Dataset.from_generator(
-            generator=safe_conversations_generator,
-            gen_kwargs={"file_path": args.data_path},
-            cache_dir=os.path.join(
-                os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
-                "cache",
-                "hf_dataset",
-            ),
-            num_proc=min(args.build_dataset_num_proc, 32),
+        dataset = load_conversation_dataset(
+            args.data_path,
+            is_preformatted=args.is_preformatted,
+            is_vlm=args.is_vlm,
         )
     if args.num_samples is not None:
         dataset = dataset.select(range(args.num_samples))
