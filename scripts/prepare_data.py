@@ -1,14 +1,16 @@
 import argparse
+import hashlib
 import json
 import os
 import random
 import subprocess
+import tempfile
 from pathlib import Path
 from typing import Dict, Tuple
 
 from tqdm import tqdm
 
-from datasets import concatenate_datasets, config, load_dataset
+from datasets import Dataset, concatenate_datasets, config, load_dataset, load_from_disk
 
 """
 This script will convert the ultrachat/sharegpt dataset to the following schema in jsonl format:
@@ -46,6 +48,7 @@ def parse_args():
             "perfectblend-llama3.3-70b-instruct",
             "perfectblend-llama4-scout-instruct",
             "perfectblend-llama4-maverick-instruct",
+            "perfectblend-qwen3-8b-regen",
             "magpie-qwen2.5-pro-1m-v0.1",
             "sharegpt4v",
             "allava4v",
@@ -61,6 +64,13 @@ def parse_args():
             "nebius-llama31-8b-infinity-instruct",
         ],
         help="The demo dataset to quickly run the training for speculative decoding",
+    )
+    parser.add_argument(
+        "--output-format",
+        type=str,
+        choices=["json", "parquet", "hf-dataset"],
+        default="json",
+        help="Output format. 'json' preserves the existing JSONL output.",
     )
     parser.add_argument(
         "--output-path",
@@ -249,52 +259,130 @@ def process_nebius_infinity_instruct(
 
 
 def load_dataset_from_path(data_path: Path):
-    suffix = data_path.suffix.split(".")[1]
+    if data_path.is_dir():
+        try:
+            return load_from_disk(str(data_path))
+        except (FileNotFoundError, ValueError):
+            pass
+
+        parquet_files = sorted(str(path) for path in data_path.rglob("*.parquet"))
+        if parquet_files:
+            return load_dataset("parquet", data_files=parquet_files, split="train")
+
+        jsonl_files = sorted(str(path) for path in data_path.rglob("*.jsonl"))
+        if jsonl_files:
+            return load_dataset("json", data_files=jsonl_files, split="train")
+
+        json_files = sorted(str(path) for path in data_path.rglob("*.json"))
+        if json_files:
+            return load_dataset("json", data_files=json_files, split="train")
+
+        raise ValueError(f"No supported dataset files found under {data_path}")
+
+    suffix = data_path.suffix.lower().lstrip(".")
+    if suffix == "jsonl":
+        suffix = "json"
+    if suffix not in {"json", "parquet"}:
+        raise ValueError(f"Unsupported dataset file type: {data_path.suffix}")
     ds = load_dataset(suffix, data_files=str(data_path), split="train")
     return ds
 
 
-def process_and_save_ds(train_ds, test_ds, output_path, proc_fn, dataset_name):
-    train_output_jsonl_path = output_path.joinpath(f"{dataset_name}_train.jsonl")
-    if train_output_jsonl_path.exists():
+def iter_processed_rows(dataset, proc_fn, dataset_name):
+    for item in dataset:
+        if proc_fn is not None:
+            row, skipped_count = proc_fn(item, dataset_name)
+            if row is None:
+                continue
+        else:
+            row = item
+            skipped_count = 0
+        yield row, skipped_count
+
+
+def build_processed_dataset(dataset, proc_fn, dataset_name, cache_dir=None):
+    skipped_count = 0
+
+    def generator():
+        nonlocal skipped_count
+        for row, row_skipped_count in iter_processed_rows(
+            dataset, proc_fn, dataset_name
+        ):
+            skipped_count += row_skipped_count
+            yield row
+
+    processed_dataset = Dataset.from_generator(generator, cache_dir=cache_dir)
+    return processed_dataset, skipped_count
+
+
+def process_and_save_ds(
+    train_ds,
+    test_ds,
+    output_path,
+    proc_fn,
+    dataset_name,
+    output_format="json",
+):
+    if output_format == "json":
+        train_suffix = "jsonl"
+    elif output_format == "parquet":
+        train_suffix = "parquet"
+    else:
+        train_suffix = None
+
+    if output_format in {"json", "parquet"}:
+        train_output_path = output_path.joinpath(f"{dataset_name}_train.{train_suffix}")
+    else:
+        train_output_path = output_path.joinpath(f"{dataset_name}_train")
+
+    if train_output_path.exists():
         print(
-            f"The dataset {dataset_name} has already been processed and saved in {train_output_jsonl_path}, skipping..."
+            f"The dataset {dataset_name} has already been processed and saved in {train_output_path}, skipping..."
         )
         return
 
-    total_skipped_count = 0
-    with open(train_output_jsonl_path, "w") as f:
-        for item in tqdm(train_ds, desc=f"Processing {dataset_name} dataset"):
-            if proc_fn is not None:
-                row, skipped_count = proc_fn(item, dataset_name)
-                if row is None:
-                    continue
-                total_skipped_count += skipped_count
-            else:
-                row = item
-            f.write(json.dumps(row, ensure_ascii=False) + "\n")
+    def save_split(split_ds, split_name):
+        if output_format in {"json", "parquet"}:
+            output_file = output_path.joinpath(
+                f"{dataset_name}_{split_name}.{train_suffix}"
+            )
+        else:
+            output_file = output_path.joinpath(f"{dataset_name}_{split_name}")
 
+        if output_format == "json":
+            skipped = 0
+            with open(output_file, "w", encoding="utf-8") as f:
+                for row, skipped_count in tqdm(
+                    iter_processed_rows(split_ds, proc_fn, dataset_name),
+                    desc=f"Processing {dataset_name} {split_name} dataset",
+                ):
+                    skipped += skipped_count
+                    f.write(json.dumps(row, ensure_ascii=False) + "\n")
+            return skipped
+
+        with tempfile.TemporaryDirectory(
+            prefix=".prepare-data-", dir=str(output_path)
+        ) as cache_dir:
+            processed_dataset, skipped = build_processed_dataset(
+                split_ds, proc_fn, dataset_name, cache_dir=cache_dir
+            )
+            if output_format == "parquet":
+                processed_dataset.to_parquet(str(output_file))
+            elif output_format == "hf-dataset":
+                processed_dataset.save_to_disk(str(output_file))
+            else:
+                raise ValueError(f"Unsupported output format: {output_format}")
+        return skipped
+
+    total_skipped_count = save_split(train_ds, "train")
     if test_ds is not None:
-        test_output_jsonl_path = output_path.joinpath(f"{dataset_name}_test.jsonl")
-        with open(test_output_jsonl_path, "w") as f:
-            for item in tqdm(test_ds, desc=f"Processing {dataset_name} test dataset"):
-                if proc_fn is not None:
-                    row, skipped_count = proc_fn(item, dataset_name)
-                    if row is None:
-                        continue
-                    total_skipped_count += skipped_count
-                else:
-                    row = item
-                f.write(json.dumps(row, ensure_ascii=False) + "\n")
+        total_skipped_count += save_split(test_ds, "test")
 
     if total_skipped_count > 0:
         total_messages = len(train_ds) + (len(test_ds) if test_ds is not None else 0)
         print(
             f"Skipped {total_skipped_count}/{total_messages} messages for {dataset_name}"
         )
-
-
-import hashlib
 
 
 def process_opc_sft_stage1(row: Dict, dataset_name: str = None) -> Tuple[Dict, int]:
@@ -307,6 +395,29 @@ def process_opc_sft_stage1(row: Dict, dataset_name: str = None) -> Tuple[Dict, i
         ],
     }
     return processed_row, 0
+
+
+def process_perfectblend_qwen3_8b_regen_row(
+    row: Dict, dataset_name: str = None
+) -> Tuple[Dict, int]:
+    conversations = []
+    for message in row["conversations"]:
+        role = message.get("role")
+        content = message.get("content")
+        if role not in {"system", "user", "assistant"} or content is None:
+            continue
+        conversations.append({"role": role, "content": content})
+
+    if not conversations:
+        return None, 0
+
+    row_id = row.get("id")
+    if row_id is None:
+        row_id = hashlib.md5(
+            json.dumps(conversations, ensure_ascii=False, sort_keys=True).encode()
+        ).hexdigest()
+
+    return {"id": str(row_id), "conversations": conversations}, 0
 
 
 def process_codealpaca_row(row: Dict, dataset_name: str = None) -> Tuple[Dict, int]:
@@ -585,6 +696,22 @@ def main():
         )["train"]
         ds = ds.map(add_index, with_indices=True)
         proc_fn = None
+    elif args.dataset == "perfectblend-qwen3-8b-regen":
+        if args.data_path is None:
+            ds = load_dataset(
+                "parquet",
+                data_files={
+                    "train": (
+                        "hf://datasets/jihwan1205/perfectblend-qwen3-8b-regen/"
+                        "data/train-*.parquet"
+                    )
+                },
+                split="train",
+            )
+        else:
+            print("Loading dataset from custom data path: ", args.data_path)
+            ds = load_dataset_from_path(Path(args.data_path))
+        proc_fn = process_perfectblend_qwen3_8b_regen_row
     elif args.dataset == "magpie-qwen2.5-pro-1m-v0.1":
         ds = load_dataset("Magpie-Align/Magpie-Qwen2.5-Pro-1M-v0.1")["train"]
         ds = ds.rename_column("uuid", "id")
@@ -692,7 +819,14 @@ def main():
         output_path = Path(args.output_path)
         output_path.mkdir(parents=True, exist_ok=True)
 
-    process_and_save_ds(train_ds, test_ds, output_path, proc_fn, args.dataset)
+    process_and_save_ds(
+        train_ds,
+        test_ds,
+        output_path,
+        proc_fn,
+        args.dataset,
+        output_format=args.output_format,
+    )
 
 
 if __name__ == "__main__":
