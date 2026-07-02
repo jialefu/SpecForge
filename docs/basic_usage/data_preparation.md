@@ -20,9 +20,46 @@ python scripts/prepare_data.py --dataset ultrachat
 
 # sharegpt
 python scripts/prepare_data.py --dataset sharegpt
+
+# Qwen3 regenerated PerfectBlend
+python scripts/prepare_data.py \
+    --dataset perfectblend-qwen3-8b-regen \
+    --data-path /data/perfectblend-qwen3-8b-regen \
+    --output-format parquet \
+    --output-path /data/specforge-datasets
 ```
 
-You can view the full list of pre-supported datasets using `python scripts/prepare_data.py --help`. The datasets are processed and saved as `jsonl` files in the `cache/dataset/<dataset_name>` directory of the project path by default.
+You can view the full list of pre-supported datasets using `python scripts/prepare_data.py --help`. The datasets are processed and saved as `jsonl` files in the `cache/dataset` directory of the project path by default.
+
+### Output formats
+
+`prepare_data.py` writes the existing JSONL line format by default:
+
+```bash
+python scripts/prepare_data.py --dataset sharegpt --output-format json
+```
+
+The available output formats are:
+
+1. `json`: writes `<dataset>_train.jsonl` and, when `--split-eval` is set, `<dataset>_test.jsonl`. This is the default and preserves the previous behavior.
+2. `parquet`: writes `<dataset>_train.parquet` and optional `<dataset>_test.parquet`.
+3. `hf-dataset`: writes `<dataset>_train/` and optional `<dataset>_test/` using Hugging Face `Dataset.save_to_disk()`.
+
+For large community datasets such as [`jihwan1205/perfectblend-qwen3-8b-regen`](https://huggingface.co/datasets/jihwan1205/perfectblend-qwen3-8b-regen), download the parquet shards to local storage first and pass the local directory through `--data-path`:
+
+```bash
+huggingface-cli download jihwan1205/perfectblend-qwen3-8b-regen \
+    --repo-type dataset \
+    --local-dir /data/perfectblend-qwen3-8b-regen
+
+python scripts/prepare_data.py \
+    --dataset perfectblend-qwen3-8b-regen \
+    --data-path /data/perfectblend-qwen3-8b-regen \
+    --output-format hf-dataset \
+    --output-path /data/specforge-datasets
+```
+
+Direct remote loading is kept for compatibility, but local parquet or `hf-dataset` directories are recommended for full training runs to avoid repeated Hugging Face range reads and timeouts.
 
 
 ## ↩️ Regenerate Datasets
