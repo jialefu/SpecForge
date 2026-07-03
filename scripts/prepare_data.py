@@ -69,12 +69,6 @@ def parse_args():
         help="The path to save the processed dataset, if not specified, the dataset will be saved in the cache/dataset/dataset_name directory of the root path",
     )
     parser.add_argument(
-        "--data-path",
-        type=str,
-        default=None,
-        help="The path to the custom dataset, if not specified, the default dataset will be loaded",
-    )
-    parser.add_argument(
         "--sample-size",
         type=int,
         default=None,
@@ -246,13 +240,6 @@ def process_nebius_infinity_instruct(
     ]
     row = {"id": str(row["id"]), "conversations": formatted_conversations}
     return row, 0
-
-
-def load_dataset_from_path(data_path: Path):
-    suffix = data_path.suffix.split(".")[1]
-    ds = load_dataset(suffix, data_files=str(data_path), split="train")
-    return ds
-
 
 def process_and_save_ds(train_ds, test_ds, output_path, proc_fn, dataset_name):
     train_output_jsonl_path = output_path.joinpath(f"{dataset_name}_train.jsonl")
@@ -548,11 +535,7 @@ def main():
         ds = load_dataset("HuggingFaceH4/ultrachat_200k")["train_sft"]
         proc_fn = process_ultrachat_row
     elif args.dataset == "sharegpt":
-        if args.data_path is None:
-            ds = load_dataset("Aeala/ShareGPT_Vicuna_unfiltered")["train"]
-        else:
-            print("Loading dataset from custom data path: ", args.data_path)
-            ds = load_dataset_from_path(Path(args.data_path))
+        ds = load_dataset("Aeala/ShareGPT_Vicuna_unfiltered")["train"]
         proc_fn = process_sharegpt_row
     elif args.dataset == "eaglechat":
         ds = load_dataset("zhaode/EagleChat")["train"]
