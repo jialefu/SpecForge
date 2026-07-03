@@ -84,6 +84,24 @@ class TestPrepareData(unittest.TestCase):
             )
         )
 
+    def test_perfectblend_qwen3_8b_recipe(self):
+        recipe = dataset_recipes.DATASET_RECIPE_REGISTRY.get("perfectblend-qwen3-8b")
+
+        self.assertEqual(
+            recipe.sources,
+            [
+                {
+                    "repo": "parquet",
+                    "data_files": {
+                        "train": "hf://datasets/jihwan1205/perfectblend-qwen3-8b-regen/data/*.parquet"
+                    },
+                    "split": "train",
+                }
+            ],
+        )
+        self.assertIs(recipe.processor, dataset_processors.identity_processor)
+        self.assertIsNotNone(recipe.post_load)
+
     def test_identity_processor_writes_normalized_rows(self):
         rows = [
             {

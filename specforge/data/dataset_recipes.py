@@ -184,6 +184,23 @@ DATASET_RECIPE_REGISTRY.register(
 )
 
 DATASET_RECIPE_REGISTRY.register(
+    name="perfectblend-qwen3-8b",
+    recipe=DatasetRecipe(
+        sources=[
+            {
+                "repo": "parquet",
+                "data_files": {
+                    "train": "hf://datasets/jihwan1205/perfectblend-qwen3-8b-regen/data/*.parquet"
+                },
+                "split": "train",
+            }
+        ],
+        processor=identity_processor,
+        post_load=lambda ds: ds.map(add_index, with_indices=True),
+    ),
+)
+
+DATASET_RECIPE_REGISTRY.register(
     name="magpie-qwen2.5-pro-1m-v0.1",
     recipe=DatasetRecipe(
         sources=[
